@@ -15,8 +15,8 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
 
-          $url = "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-stable-windows-amd64.zip"
-          $zip = "$env:TEMP\ngrok.zip"
+          $url = "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip"
+          $zip = "$env:RUNNER_TEMP\ngrok.zip"
           $dir = "$env:RUNNER_TEMP\ngrok"
 
           Invoke-WebRequest -Uri $url -OutFile $zip
@@ -26,15 +26,20 @@ jobs:
           }
 
           New-Item -ItemType Directory -Path $dir -Force | Out-Null
-          Expand-Archive -Path $zip -DestinationPath $dir -Force
 
-          Remove-Item $zip -Force
+          Expand-Archive `
+            -Path $zip `
+            -DestinationPath $dir `
+            -Force
 
           if (-not (Test-Path "$dir\ngrok.exe")) {
-            throw "ngrok.exe was not found after extraction."
+            throw "ngrok.exe was not found."
           }
 
-          Copy-Item "$dir\ngrok.exe" "$env:GITHUB_WORKSPACE\ngrok.exe" -Force
+          Copy-Item `
+            "$dir\ngrok.exe" `
+            "$env:GITHUB_WORKSPACE\ngrok.exe" `
+            -Force
 
           Write-Host "Ngrok downloaded successfully."
 
@@ -55,6 +60,8 @@ jobs:
             throw "Ngrok authentication failed."
           }
 
+          Write-Host "Ngrok authentication successful."
+
       - name: Enable RDP
         shell: pwsh
         run: |
@@ -65,12 +72,16 @@ jobs:
             -Name "fDenyTSConnections" `
             -Value 0
 
-          Set-ItemProperty `
-            -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" `
-            -Name "UserAuthentication" `
-            -Value 0
+          Set-Service `
+            -Name "TermService" `
+            -StartupType Automatic
 
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          Start-Service `
+            -Name "TermService" `
+            -ErrorAction SilentlyContinue
+
+          Enable-NetFirewallRule `
+            -DisplayGroup "Remote Desktop"
 
           Write-Host "RDP enabled successfully."
 
@@ -82,29 +93,36 @@ jobs:
           $username = "H1Z"
           $password = "DRISdris@123"
 
-          $existing = net user $username 2>&1
+          # Check whether H1Z already exists
+          $existingUser = Get-LocalUser `
+            -Name $username `
+            -ErrorAction SilentlyContinue
 
-          if ($LASTEXITCODE -eq 0) {
-            net user $username /delete
-
-            if ($LASTEXITCODE -ne 0) {
-              throw "Could not remove existing H1Z account."
-            }
+          if ($existingUser) {
+            Remove-LocalUser `
+              -Name $username
           }
 
-          net user $username $password /add
+          $securePassword = ConvertTo-SecureString `
+            $password `
+            -AsPlainText `
+            -Force
 
-          if ($LASTEXITCODE -ne 0) {
-            throw "Could not create H1Z account."
-          }
+          New-LocalUser `
+            -Name $username `
+            -Password $securePassword `
+            -FullName "H1Z RDP User" `
+            -Description "RDP user for this temporary GitHub runner" `
+            -PasswordNeverExpires
 
-          net localgroup Administrators $username /add
+          Add-LocalGroupMember `
+            -Group "Administrators" `
+            -Member $username
 
-          if ($LASTEXITCODE -ne 0) {
-            throw "Could not add H1Z to Administrators."
-          }
-
-          Write-Host "RDP user H1Z created successfully."
+          Write-Host "============================================"
+          Write-Host "RDP USER CREATED"
+          Write-Host "Username: H1Z"
+          Write-Host "============================================"
 
       - name: Allow RDP Firewall Rule
         shell: pwsh
@@ -138,35 +156,55 @@ jobs:
             Remove-Item $log -Force
           }
 
+          # IMPORTANT:
+          # Only redirect stdout.
+          # Redirecting stdout and stderr to the same file causes
+          # the PowerShell error seen previously.
+
           Start-Process `
             -FilePath $ngrok `
             -ArgumentList "tcp 3389 --log=stdout" `
             -RedirectStandardOutput $log `
-            -RedirectStandardError $log `
             -WindowStyle Hidden
+
+          Write-Host "Waiting for Ngrok tunnel..."
 
           $publicUrl = $null
           $deadline = (Get-Date).AddSeconds(90)
 
           while ((Get-Date) -lt $deadline -and -not $publicUrl) {
+
             Start-Sleep -Seconds 3
 
             try {
-              $tunnels = Invoke-RestMethod `
+              $response = Invoke-RestMethod `
                 -Uri "http://127.0.0.1:4040/api/tunnels" `
                 -Method Get `
                 -ErrorAction Stop
 
-              if ($tunnels.tunnels.Count -gt 0) {
-                $publicUrl = $tunnels.tunnels[0].public_url
+              if ($response.tunnels) {
+
+                foreach ($tunnel in $response.tunnels) {
+
+                  if ($tunnel.public_url -like "tcp://*") {
+                    $publicUrl = $tunnel.public_url
+                    break
+                  }
+
+                }
               }
             }
             catch {
               # Ngrok API may not be ready yet.
             }
 
+            # Fallback: check the log
             if (-not $publicUrl -and (Test-Path $log)) {
-              $content = Get-Content $log -Raw -ErrorAction SilentlyContinue
+
+              $content = Get-Content `
+                $log `
+                -Raw `
+                -ErrorAction SilentlyContinue
 
               if ($content -match 'tcp://([A-Za-z0-9\.\-]+:\d+)') {
                 $publicUrl = "tcp://$($Matches[1])"
@@ -175,10 +213,15 @@ jobs:
           }
 
           if (-not $publicUrl) {
-            Write-Host "Ngrok log:"
+
+            Write-Host ""
+            Write-Host "========== NGROK LOG =========="
+
             if (Test-Path $log) {
               Get-Content $log
             }
+
+            Write-Host "==============================="
 
             throw "Ngrok tunnel could not be established."
           }
@@ -187,23 +230,31 @@ jobs:
 
           Write-Host ""
           Write-Host "============================================"
-          Write-Host "          WINDOWS RDP CONNECTION"
+          Write-Host "       WINDOWS RDP CONNECTION"
           Write-Host "============================================"
           Write-Host "Address : $address"
-          Write-Host "User    : H1Z"
+          Write-Host "Username: H1Z"
           Write-Host "Password: DRISdris@123"
           Write-Host "============================================"
           Write-Host ""
-          Write-Host "Use mstsc.exe and enter the Address above."
+          Write-Host "Open Windows Remote Desktop (mstsc.exe)"
+          Write-Host "and enter the Address shown above."
           Write-Host ""
 
+          # Keep the GitHub runner alive
           while ($true) {
             Start-Sleep -Seconds 300
           }
 
-      - name: Cleanup
+      - name: Cleanup Ngrok
         if: always()
         shell: pwsh
         run: |
-          Get-Process ngrok -ErrorAction SilentlyContinue |
-            Stop-Process -Force -ErrorAction SilentlyContinue
+          Get-Process `
+            -Name "ngrok" `
+            -ErrorAction SilentlyContinue |
+            Stop-Process `
+              -Force `
+              -ErrorAction SilentlyContinue
+
+          Write-Host "Ngrok process stopped."

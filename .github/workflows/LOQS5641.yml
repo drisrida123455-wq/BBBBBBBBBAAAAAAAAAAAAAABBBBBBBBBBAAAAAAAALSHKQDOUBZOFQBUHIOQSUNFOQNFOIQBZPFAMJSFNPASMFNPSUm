@@ -1,6 +1,7 @@
 name: Windows RDP via Ngrok
 
-on: [push]
+on:
+  push:
 
 jobs:
   rdp-setup:
@@ -9,134 +10,200 @@ jobs:
 
     steps:
 
-    - name: Download and extract Ngrok
-      shell: powershell
-      run: |
-        $ErrorActionPreference = "Stop"
+      - name: Download Ngrok
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
 
-        Invoke-WebRequest `
-          "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-stable-windows-amd64.zip" `
-          -OutFile ngrok.zip
+          $url = "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-stable-windows-amd64.zip"
+          $zip = "$env:TEMP\ngrok.zip"
+          $dir = "$env:RUNNER_TEMP\ngrok"
 
-        Expand-Archive ngrok.zip -DestinationPath "$env:USERPROFILE"
-        Remove-Item ngrok.zip
+          Invoke-WebRequest -Uri $url -OutFile $zip
 
-        Copy-Item "$env:USERPROFILE\ngrok.exe" "$env:GITHUB_WORKSPACE\ngrok.exe"
+          if (Test-Path $dir) {
+            Remove-Item $dir -Recurse -Force
+          }
 
-    - name: Authenticate Ngrok
-      shell: powershell
-      run: |
-        $ErrorActionPreference = "Stop"
-        .\ngrok.exe authtoken "${{ secrets.NGROK_AUTH_TOKEN }}"
+          New-Item -ItemType Directory -Path $dir -Force | Out-Null
+          Expand-Archive -Path $zip -DestinationPath $dir -Force
 
-    - name: Enable RDP and Firewall
-      shell: powershell
-      run: |
-        Set-ItemProperty `
-          -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" `
-          -Name "fDenyTSConnections" `
-          -Value 0
+          Remove-Item $zip -Force
 
-        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          if (-not (Test-Path "$dir\ngrok.exe")) {
+            throw "ngrok.exe was not found after extraction."
+          }
 
-        if (-not (Get-NetFirewallRule -DisplayName "Allow RDP via Ngrok" -ErrorAction SilentlyContinue)) {
-          New-NetFirewallRule `
+          Copy-Item "$dir\ngrok.exe" "$env:GITHUB_WORKSPACE\ngrok.exe" -Force
+
+          Write-Host "Ngrok downloaded successfully."
+
+      - name: Authenticate Ngrok
+        shell: pwsh
+        env:
+          NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          if ([string]::IsNullOrWhiteSpace($env:NGROK_AUTH_TOKEN)) {
+            throw "NGROK_AUTH_TOKEN secret is missing."
+          }
+
+          & "$env:GITHUB_WORKSPACE\ngrok.exe" config add-authtoken "$env:NGROK_AUTH_TOKEN"
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Ngrok authentication failed."
+          }
+
+      - name: Enable RDP
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          Set-ItemProperty `
+            -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server" `
+            -Name "fDenyTSConnections" `
+            -Value 0
+
+          Set-ItemProperty `
+            -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" `
+            -Name "UserAuthentication" `
+            -Value 0
+
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+
+          Write-Host "RDP enabled successfully."
+
+      - name: Create RDP User
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $username = "H1Z"
+          $password = "DRISdris@123"
+
+          $existing = net user $username 2>&1
+
+          if ($LASTEXITCODE -eq 0) {
+            net user $username /delete
+
+            if ($LASTEXITCODE -ne 0) {
+              throw "Could not remove existing H1Z account."
+            }
+          }
+
+          net user $username $password /add
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not create H1Z account."
+          }
+
+          net localgroup Administrators $username /add
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not add H1Z to Administrators."
+          }
+
+          Write-Host "RDP user H1Z created successfully."
+
+      - name: Allow RDP Firewall Rule
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $rule = Get-NetFirewallRule `
             -DisplayName "Allow RDP via Ngrok" `
-            -Direction Inbound `
-            -Action Allow `
-            -Protocol TCP `
-            -LocalPort 3389
-        }
+            -ErrorAction SilentlyContinue
 
-    - name: Create Admin User
-      shell: powershell
-      run: |
-        $ErrorActionPreference = "Stop"
+          if (-not $rule) {
+            New-NetFirewallRule `
+              -DisplayName "Allow RDP via Ngrok" `
+              -Direction Inbound `
+              -Action Allow `
+              -Protocol TCP `
+              -LocalPort 3389 | Out-Null
+          }
 
-        # R@i2dda = 7 characters.
-        # Windows default policy may require at least 8.
-        net accounts /minpwlen:7
+          Write-Host "Firewall rule configured."
 
-        # Remove existing H1Z if present
-        net user H1Z /delete 2>$null
+      - name: Start Ngrok RDP Tunnel
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
 
-        net user H1Z "R@i2dda" /add
+          $ngrok = "$env:GITHUB_WORKSPACE\ngrok.exe"
+          $log = "$env:RUNNER_TEMP\ngrok.log"
 
-        if ($LASTEXITCODE -ne 0) {
-          throw "Failed to create H1Z user"
-        }
+          if (Test-Path $log) {
+            Remove-Item $log -Force
+          }
 
-        net localgroup administrators H1Z /add
+          Start-Process `
+            -FilePath $ngrok `
+            -ArgumentList "tcp 3389 --log=stdout" `
+            -RedirectStandardOutput $log `
+            -RedirectStandardError $log `
+            -WindowStyle Hidden
 
-        if ($LASTEXITCODE -ne 0) {
-          throw "Failed to add H1Z to Administrators"
-        }
+          $publicUrl = $null
+          $deadline = (Get-Date).AddSeconds(90)
 
-        Write-Host "User H1Z created successfully."
+          while ((Get-Date) -lt $deadline -and -not $publicUrl) {
+            Start-Sleep -Seconds 3
 
-    - name: Start Ngrok Tunnel
-      shell: powershell
-      run: |
-        $ErrorActionPreference = "Stop"
+            try {
+              $tunnels = Invoke-RestMethod `
+                -Uri "http://127.0.0.1:4040/api/tunnels" `
+                -Method Get `
+                -ErrorAction Stop
 
-        Start-Process `
-          -FilePath "$pwd\ngrok.exe" `
-          -ArgumentList "tcp 3389 --log=stdout" `
-          -NoNewWindow `
-          -RedirectStandardOutput ngrok.log
+              if ($tunnels.tunnels.Count -gt 0) {
+                $publicUrl = $tunnels.tunnels[0].public_url
+              }
+            }
+            catch {
+              # Ngrok API may not be ready yet.
+            }
 
-        $tunnelUrl = $null
-        $timeout = 60
+            if (-not $publicUrl -and (Test-Path $log)) {
+              $content = Get-Content $log -Raw -ErrorAction SilentlyContinue
 
-        while ($timeout -gt 0 -and -not $tunnelUrl) {
-          Start-Sleep -Seconds 5
-          $timeout -= 5
-
-          try {
-            $response = Invoke-RestMethod `
-              -Uri "http://localhost:4040/api/tunnels" `
-              -ErrorAction Stop
-
-            if ($response.tunnels.Count -gt 0) {
-              $tunnelUrl = $response.tunnels[0].public_url -replace "^tcp://", ""
+              if ($content -match 'tcp://([A-Za-z0-9\.\-]+:\d+)') {
+                $publicUrl = "tcp://$($Matches[1])"
+              }
             }
           }
-          catch {
-            $logContent = Get-Content ngrok.log -ErrorAction SilentlyContinue
 
-            $match = $logContent |
-              Select-String -Pattern "tcp://([a-zA-Z0-9\.\-]+:\d+)"
-
-            if ($match) {
-              $tunnelUrl = $match.Matches.Groups[1].Value
+          if (-not $publicUrl) {
+            Write-Host "Ngrok log:"
+            if (Test-Path $log) {
+              Get-Content $log
             }
+
+            throw "Ngrok tunnel could not be established."
           }
-        }
 
-        if (-not $tunnelUrl) {
-          Write-Host "::error::Ngrok tunnel could not be established"
-          Get-Content ngrok.log -ErrorAction SilentlyContinue
-          exit 1
-        }
+          $address = $publicUrl -replace "^tcp://", ""
 
-        Write-Host ""
-        Write-Host "============================================"
-        Write-Host "       RDP CONNECTION DETAILS"
-        Write-Host "============================================"
-        Write-Host "Address:  $tunnelUrl"
-        Write-Host "Username: H1Z"
-        Write-Host "Password: R@i2dda"
-        Write-Host "============================================"
-        Write-Host ""
-        Write-Host "Connect using Windows Remote Desktop (mstsc)."
-        Write-Host ""
+          Write-Host ""
+          Write-Host "============================================"
+          Write-Host "          WINDOWS RDP CONNECTION"
+          Write-Host "============================================"
+          Write-Host "Address : $address"
+          Write-Host "User    : H1Z"
+          Write-Host "Password: DRISdris@123"
+          Write-Host "============================================"
+          Write-Host ""
+          Write-Host "Use mstsc.exe and enter the Address above."
+          Write-Host ""
 
-        while ($true) {
-          Start-Sleep -Seconds 300
-        }
+          while ($true) {
+            Start-Sleep -Seconds 300
+          }
 
-    - name: Cleanup Ngrok
-      if: always()
-      shell: powershell
-      run: |
-        Stop-Process -Name "ngrok" -Force -ErrorAction SilentlyContinue
+      - name: Cleanup
+        if: always()
+        shell: pwsh
+        run: |
+          Get-Process ngrok -ErrorAction SilentlyContinue |
+            Stop-Process -Force -ErrorAction SilentlyContinue

@@ -1,4 +1,3 @@
-
 name: Windows RDP via Ngrok
 
 on: [push]
@@ -9,32 +8,82 @@ jobs:
     timeout-minutes: 360
 
     steps:
+
     - name: Download and extract Ngrok
+      shell: powershell
       run: |
-        Invoke-WebRequest "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-stable-windows-amd64.zip" -OutFile ngrok.zip
+        $ErrorActionPreference = "Stop"
+
+        Invoke-WebRequest `
+          "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-stable-windows-amd64.zip" `
+          -OutFile ngrok.zip
+
         Expand-Archive ngrok.zip -DestinationPath "$env:USERPROFILE"
         Remove-Item ngrok.zip
-        Copy-Item "$env:USERPROFILE\ngrok.exe" "$env:GITHUB_WORKSPACE"
+
+        Copy-Item "$env:USERPROFILE\ngrok.exe" "$env:GITHUB_WORKSPACE\ngrok.exe"
 
     - name: Authenticate Ngrok
+      shell: powershell
       run: |
         $ErrorActionPreference = "Stop"
         .\ngrok.exe authtoken "${{ secrets.NGROK_AUTH_TOKEN }}"
 
     - name: Enable RDP and Firewall
+      shell: powershell
       run: |
-        Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
+        Set-ItemProperty `
+          -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" `
+          -Name "fDenyTSConnections" `
+          -Value 0
+
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-        New-NetFirewallRule -DisplayName "Allow RDP via Ngrok" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 3389
+
+        if (-not (Get-NetFirewallRule -DisplayName "Allow RDP via Ngrok" -ErrorAction SilentlyContinue)) {
+          New-NetFirewallRule `
+            -DisplayName "Allow RDP via Ngrok" `
+            -Direction Inbound `
+            -Action Allow `
+            -Protocol TCP `
+            -LocalPort 3389
+        }
 
     - name: Create Admin User
+      shell: powershell
       run: |
-        net user H1Z 123123 /add
+        $ErrorActionPreference = "Stop"
+
+        # R@i2dda = 7 characters.
+        # Windows default policy may require at least 8.
+        net accounts /minpwlen:7
+
+        # Remove existing H1Z if present
+        net user H1Z /delete 2>$null
+
+        net user H1Z "R@i2dda" /add
+
+        if ($LASTEXITCODE -ne 0) {
+          throw "Failed to create H1Z user"
+        }
+
         net localgroup administrators H1Z /add
 
+        if ($LASTEXITCODE -ne 0) {
+          throw "Failed to add H1Z to Administrators"
+        }
+
+        Write-Host "User H1Z created successfully."
+
     - name: Start Ngrok Tunnel
+      shell: powershell
       run: |
-        Start-Process -FilePath "$pwd\ngrok.exe" -ArgumentList "tcp 3389 --log=stdout" -NoNewWindow -RedirectStandardOutput ngrok.log
+        $ErrorActionPreference = "Stop"
+
+        Start-Process `
+          -FilePath "$pwd\ngrok.exe" `
+          -ArgumentList "tcp 3389 --log=stdout" `
+          -NoNewWindow `
+          -RedirectStandardOutput ngrok.log
 
         $tunnelUrl = $null
         $timeout = 60
@@ -42,37 +91,52 @@ jobs:
         while ($timeout -gt 0 -and -not $tunnelUrl) {
           Start-Sleep -Seconds 5
           $timeout -= 5
+
           try {
-            $response = Invoke-RestMethod -Uri "http://localhost:4040/api/tunnels" -ErrorAction Stop
-            $tunnelUrl = $response.tunnels[0].public_url -replace "tcp://", ""
-          } catch {
+            $response = Invoke-RestMethod `
+              -Uri "http://localhost:4040/api/tunnels" `
+              -ErrorAction Stop
+
+            if ($response.tunnels.Count -gt 0) {
+              $tunnelUrl = $response.tunnels[0].public_url -replace "^tcp://", ""
+            }
+          }
+          catch {
             $logContent = Get-Content ngrok.log -ErrorAction SilentlyContinue
-            $tunnelUrl = $logContent | Select-String -Pattern "tcp://([a-zA-Z0-9\.\-]+:\d+)" | ForEach-Object { $_.Matches.Groups[1].Value }
+
+            $match = $logContent |
+              Select-String -Pattern "tcp://([a-zA-Z0-9\.\-]+:\d+)"
+
+            if ($match) {
+              $tunnelUrl = $match.Matches.Groups[1].Value
+            }
           }
         }
 
         if (-not $tunnelUrl) {
-          Write-Output "::error::Ngrok tunnel could not be established"
+          Write-Host "::error::Ngrok tunnel could not be established"
+          Get-Content ngrok.log -ErrorAction SilentlyContinue
           exit 1
         }
 
-        Write-Output "============================================"
-        Write-Output "||     RDP CONNECTION DETAILS             ||"
-        Write-Output "============================================"
-        Write-Output "Address: $tunnelUrl"
-        Write-Output "Username: H1Z"
-        Write-Output "Password: 123123"
-        Write-Output "--------------------------------------------"
-        Write-Output "Instructions:"
-        Write-Output "1. Press Win + R, type 'mstsc' and hit Enter"
-        Write-Output "2. Connect to: $tunnelUrl"
-        Write-Output "3. Use credentials above"
-        Write-Output "============================================"
+        Write-Host ""
+        Write-Host "============================================"
+        Write-Host "       RDP CONNECTION DETAILS"
+        Write-Host "============================================"
+        Write-Host "Address:  $tunnelUrl"
+        Write-Host "Username: H1Z"
+        Write-Host "Password: R@i2dda"
+        Write-Host "============================================"
+        Write-Host ""
+        Write-Host "Connect using Windows Remote Desktop (mstsc)."
+        Write-Host ""
 
-        while ($true) { Start-Sleep -Seconds 300 }
+        while ($true) {
+          Start-Sleep -Seconds 300
+        }
 
     - name: Cleanup Ngrok
       if: always()
+      shell: powershell
       run: |
         Stop-Process -Name "ngrok" -Force -ErrorAction SilentlyContinue
-

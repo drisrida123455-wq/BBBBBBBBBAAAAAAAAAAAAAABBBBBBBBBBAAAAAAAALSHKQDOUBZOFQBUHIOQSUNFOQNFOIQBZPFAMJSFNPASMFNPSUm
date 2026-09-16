@@ -80,10 +80,14 @@ jobs:
           }
 
           $dmz = "$env:GITHUB_WORKSPACE\superdmz.exe"
-          $logFile = "$env:RUNNER_TEMP\superdmz.log"
+          $outLog = "$env:RUNNER_TEMP\superdmz-out.log"
+          $errLog = "$env:RUNNER_TEMP\superdmz-err.log"
 
-          # تصحيح الأمر باستخدام -token بدلاً من -k
-          $process = Start-Process -FilePath $dmz -ArgumentList "-token `"$env:SUPERDMZ_TOKEN`"" -RedirectStandardOutput $logFile -RedirectStandardError $logFile -PassThru -WindowStyle Hidden
+          New-Item -ItemType File -Path $outLog -Force | Out-Null
+          New-Item -ItemType File -Path $errLog -Force | Out-Null
+
+          # توجيه قناة المخرجات وقناة الأخطاء إلى ملفين منفصلين لتفادي التعارض
+          $process = Start-Process -FilePath $dmz -ArgumentList "-token `"$env:SUPERDMZ_TOKEN`"" -RedirectStandardOutput $outLog -RedirectStandardError $errLog -PassThru -WindowStyle Hidden
 
           Write-Host "[✓] تم إطلاق عملية SuperDMZ (PID: $($process.Id))" -ForegroundColor Green
           Write-Host "============================================" -ForegroundColor Yellow
@@ -94,18 +98,32 @@ jobs:
           Write-Host "============================================" -ForegroundColor Yellow
           Write-Host "مراقبة السجلات المباشرة للأداة:" -ForegroundColor Cyan
 
-          # حلقة لمراقبة وطباعة السجلات أولاً بأول في الشاشة
-          $lastLine = 0
+          $lastOutLine = 0
+          $lastErrLine = 0
+
           while ($true) {
-            if (Test-Path $logFile) {
-              $lines = Get-Content $logFile
-              if ($lines.Count -gt $lastLine) {
-                for ($i = $lastLine; $i -lt $lines.Count; $i++) {
-                  Write-Host "[SuperDMZ] $($lines[$i])" -ForegroundColor Gray
+            # قراءة المخرجات المباشرة للبرنامج
+            if (Test-Path $outLog) {
+              $outLines = Get-Content $outLog -ErrorAction SilentlyContinue
+              if ($outLines.Count -gt $lastOutLine) {
+                for ($i = $lastOutLine; $i -lt $outLines.Count; $i++) {
+                  Write-Host "[SuperDMZ] $($outLines[$i])" -ForegroundColor Gray
                 }
-                $lastLine = $lines.Count
+                $lastOutLine = $outLines.Count
               }
             }
+
+            # قراءة أي أخطاء تظهر من الأداة
+            if (Test-Path $errLog) {
+              $errLines = Get-Content $errLog -ErrorAction SilentlyContinue
+              if ($errLines.Count -gt $lastErrLine) {
+                for ($j = $lastErrLine; $j -lt $errLines.Count; $j++) {
+                  Write-Host "[SuperDMZ ERR] $($errLines[$j])" -ForegroundColor Red
+                }
+                $lastErrLine = $errLines.Count
+              }
+            }
+
             Start-Sleep -Seconds 3
           }
 

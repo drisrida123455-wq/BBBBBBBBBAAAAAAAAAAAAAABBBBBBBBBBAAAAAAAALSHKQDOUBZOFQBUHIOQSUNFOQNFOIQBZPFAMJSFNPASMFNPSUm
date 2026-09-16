@@ -16,25 +16,21 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
 
-          $downloadUrl = "https://superdmz.com/login/dl.php?app=windows-installer"
-          $installerPath = "$env:RUNNER_TEMP\superdmz_setup.exe"
+          $rawUrl = "https://raw.githubusercontent.com/drisrida123455-wq/Xddg77-GbklKMooooooooo156sqd89fh47gfhj-g/main/SuperDMZ-Setup-v1.9.1.exe"
+          $installer = "$env:RUNNER_TEMP\SuperDMZ-Setup.exe"
           $targetExec = "$env:GITHUB_WORKSPACE\superdmz.exe"
 
-          Write-Host "جاري تحميل أداة SuperDMZ مع اتباع التوجيهات (Redirects)..."
-          
-          # استخدام curl.exe لضمان جلب الملف الأخير من الرابط المباشر
-          curl.exe -sL $downloadUrl -o $installerPath
+          Write-Host "جاري تحميل مثبت SuperDMZ..."
+          curl.exe -sL $rawUrl -o $installer
 
-          if (-not (Test-Path $installerPath) -or (Get-Item $installerPath).Length -lt 500000) {
-            throw "فشل التحميل أو أن الملف غير مكتمل. يرجى التأكد من أن الرابط لا يتطلب تسجيل دخول."
+          if (-not (Test-Path $installer)) {
+            throw "فشل تحميل ملف التثبيت!"
           }
 
-          Write-Host "جاري تنفيذ التثبيت الصامت لاستخراج الملف التنفيذي..."
+          Write-Host "تم التحميل بنجاح. جاري التثبيت الصامت..."
+          Start-Process -FilePath $installer -ArgumentList "/S", "/VERYSILENT", "/quiet" -Wait -ErrorAction SilentlyContinue
 
-          # تثبيت صامت للبرنامج في بيئة Runner
-          Start-Process -FilePath $installerPath -ArgumentList "/S", "/VERYSILENT", "/quiet" -Wait -ErrorAction SilentlyContinue
-
-          # البحث عن المسار الذي استقر فيه الملف التنفيذي
+          # البحث عن مكان تثبيت البرنامج
           $possiblePaths = @(
             "$env:ProgramFiles\SuperDMZ\superdmz.exe",
             "${env:ProgramFiles(x86)}\SuperDMZ\superdmz.exe",
@@ -48,9 +44,8 @@ jobs:
             Copy-Item -Path $foundPath -Destination $targetExec -Force
             Write-Host "تم تثبيت واستخراج superdmz.exe بنجاح."
           } else {
-            # في حال كان الرابط يعيد الأداة مباشرة بدون برنامج تثبيت
-            Move-Item -Path $installerPath -Destination $targetExec -Force
-            Write-Host "تم تجهيز الأداة المباشرة بنجاح."
+            Move-Item -Path $installer -Destination $targetExec -Force
+            Write-Host "تم استخدام الملف التنفيذي المباشر."
           }
 
       - name: Enable RDP
@@ -142,10 +137,6 @@ jobs:
           }
 
           $dmz = "$env:GITHUB_WORKSPACE\superdmz.exe"
-
-          if (-not (Test-Path $dmz)) {
-            throw "الملف التنفيذي superdmz.exe غير موجود لربط النفق."
-          }
 
           Write-Host "Starting SuperDMZ RDP tunnel..."
 

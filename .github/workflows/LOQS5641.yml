@@ -11,26 +11,20 @@ jobs:
 
     steps:
 
-      - name: Download SuperDMZ Client
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Verify SuperDMZ Client
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-
-          # استبدل هذا الرابط برابط تحميل العميل المباشر من لوحة SuperDMZ / DMZGate
-          $url = "https://dmzgate.com/downloads/superdmz-windows-amd64.exe"
           $dmz = "$env:GITHUB_WORKSPACE\superdmz.exe"
 
-          try {
-            Invoke-WebRequest -Uri $url -OutFile $dmz -UseBasicParsing
-          } catch {
-            Write-Host "فشل التحميل من الرابط المباشر، جاري البحث عن الملف المحلي..."
-          }
-
           if (-not (Test-Path $dmz)) {
-            throw "SuperDMZ client binary not found. Please provide a valid download URL."
+            throw "يرجى رفع ملف superdmz.exe إلى المجلد الرئيسي للمستودع (Repository Root) أولاً."
           }
 
-          Write-Host "SuperDMZ downloaded successfully."
+          Write-Host "SuperDMZ client is ready."
 
       - name: Enable RDP
         shell: pwsh
@@ -124,7 +118,7 @@ jobs:
 
           Write-Host "Starting SuperDMZ RDP tunnel..."
 
-          # تشغيل النفق باستعمال SUPERDMZ_TOKEN
+          # تشغيل البرنامج وتمرير التوكن
           Start-Process `
             -FilePath $dmz `
             -ArgumentList "-k `"$env:SUPERDMZ_TOKEN`" rdp" `
@@ -149,7 +143,7 @@ jobs:
               if ($output) {
                 Write-Host $output
 
-                if ($output -match '(dmzgate\.com|connected|online)') {
+                if ($output -match '(dmzgate\.com|connected|online|success)') {
                   $found = $true
                   break
                 }
@@ -167,7 +161,6 @@ jobs:
           Write-Host "============================================"
           Write-Host ""
 
-          # الإبقاء على تشغيل Workflow
           while ($true) {
             Start-Sleep -Seconds 300
           }

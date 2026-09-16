@@ -11,20 +11,22 @@ jobs:
 
     steps:
 
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Verify SuperDMZ Client
+      - name: Download SuperDMZ Client
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
+
+          $url = "https://superdmz.com/login/dl.php?app=windows-installer"
           $dmz = "$env:GITHUB_WORKSPACE\superdmz.exe"
 
+          Write-Host "جاري تحميل أداة SuperDMZ..."
+          Invoke-WebRequest -Uri $url -OutFile $dmz -UseBasicParsing
+
           if (-not (Test-Path $dmz)) {
-            throw "يرجى رفع ملف superdmz.exe إلى المجلد الرئيسي للمستودع (Repository Root) أولاً."
+            throw "فشل تحميل الملف، تحقق من الرابط."
           }
 
-          Write-Host "SuperDMZ client is ready."
+          Write-Host "تم التحميل بنجاح."
 
       - name: Enable RDP
         shell: pwsh
@@ -118,7 +120,6 @@ jobs:
 
           Write-Host "Starting SuperDMZ RDP tunnel..."
 
-          # تشغيل البرنامج وتمرير التوكن
           Start-Process `
             -FilePath $dmz `
             -ArgumentList "-k `"$env:SUPERDMZ_TOKEN`" rdp" `
@@ -126,30 +127,8 @@ jobs:
             -RedirectStandardError "$env:RUNNER_TEMP\superdmz-error.log" `
             -WindowStyle Hidden
 
-          $deadline = (Get-Date).AddSeconds(90)
-          $found = $false
-
-          while ((Get-Date) -lt $deadline) {
-
-            Start-Sleep -Seconds 3
-
-            if (Test-Path "$env:RUNNER_TEMP\superdmz.log") {
-
-              $output = Get-Content `
-                "$env:RUNNER_TEMP\superdmz.log" `
-                -Raw `
-                -ErrorAction SilentlyContinue
-
-              if ($output) {
-                Write-Host $output
-
-                if ($output -match '(dmzgate\.com|connected|online|success)') {
-                  $found = $true
-                  break
-                }
-              }
-            }
-          }
+          Start-Sleep -Seconds 10
+          Get-Content "$env:RUNNER_TEMP\superdmz.log" -ErrorAction SilentlyContinue
 
           Write-Host ""
           Write-Host "============================================"
@@ -157,7 +136,6 @@ jobs:
           Write-Host "============================================"
           Write-Host "Username: H1Z"
           Write-Host "Password: DRISdris@123"
-          Write-Host "Address: rdp-free-on-github.dmzgate.com:17931"
           Write-Host "============================================"
           Write-Host ""
 

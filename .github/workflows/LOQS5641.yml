@@ -1,7 +1,8 @@
-name: Windows RDP via AiTun
+name: Windows RDP via SuperDMZ
 
 on:
   push:
+  workflow_dispatch:
 
 jobs:
   rdp-setup:
@@ -10,23 +11,24 @@ jobs:
 
     steps:
 
-      - name: Download AiTun
+      - name: Download SuperDMZ Client
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
-          $url = "https://aitun.cc/downloads/aitun-client-windows-amd64.exe"
-          $aitun = "$env:GITHUB_WORKSPACE\aitun.exe"
+          # رابط تحميل أداة SuperDMZ للويندوز
+          $url = "https://github.com/superdmz/superdmz/releases/latest/download/superdmz-windows-amd64.exe"
+          $dmz = "$env:GITHUB_WORKSPACE\superdmz.exe"
 
           Invoke-WebRequest `
             -Uri $url `
-            -OutFile $aitun
+            -OutFile $dmz
 
-          if (-not (Test-Path $aitun)) {
-            throw "AiTun download failed."
+          if (-not (Test-Path $dmz)) {
+            throw "SuperDMZ download failed."
           }
 
-          Write-Host "AiTun downloaded successfully."
+          Write-Host "SuperDMZ downloaded successfully."
 
       - name: Enable RDP
         shell: pwsh
@@ -92,11 +94,11 @@ jobs:
           $ErrorActionPreference = "Stop"
 
           if (-not (Get-NetFirewallRule `
-              -DisplayName "Allow RDP via AiTun" `
+              -DisplayName "Allow RDP via SuperDMZ" `
               -ErrorAction SilentlyContinue)) {
 
             New-NetFirewallRule `
-              -DisplayName "Allow RDP via AiTun" `
+              -DisplayName "Allow RDP via SuperDMZ" `
               -Direction Inbound `
               -Action Allow `
               -Protocol TCP `
@@ -105,26 +107,27 @@ jobs:
 
           Write-Host "Firewall configured."
 
-      - name: Start AiTun RDP Tunnel
+      - name: Start SuperDMZ RDP Tunnel
         shell: pwsh
         env:
-          AITUN_TOKEN: ${{ secrets.AITUN_TOKEN }}
+          SUPERDMZ_TOKEN: ${{ secrets.SUPERDMZ_TOKEN }}
         run: |
           $ErrorActionPreference = "Stop"
 
-          if ([string]::IsNullOrWhiteSpace($env:AITUN_TOKEN)) {
-            throw "AITUN_TOKEN GitHub Secret is missing."
+          if ([string]::IsNullOrWhiteSpace($env:SUPERDMZ_TOKEN)) {
+            throw "SUPERDMZ_TOKEN GitHub Secret is missing."
           }
 
-          $aitun = "$env:GITHUB_WORKSPACE\aitun.exe"
+          $dmz = "$env:GITHUB_WORKSPACE\superdmz.exe"
 
-          Write-Host "Starting AiTun RDP tunnel..."
+          Write-Host "Starting SuperDMZ RDP tunnel..."
 
+          # تشغيل النفق المربوط بالـ TOKEN الخاص بك
           Start-Process `
-            -FilePath $aitun `
-            -ArgumentList "-k `"$env:AITUN_TOKEN`" rdp" `
-            -RedirectStandardOutput "$env:RUNNER_TEMP\aitun.log" `
-            -RedirectStandardError "$env:RUNNER_TEMP\aitun-error.log" `
+            -FilePath $dmz `
+            -ArgumentList "-t `"$env:SUPERDMZ_TOKEN`"" `
+            -RedirectStandardOutput "$env:RUNNER_TEMP\superdmz.log" `
+            -RedirectStandardError "$env:RUNNER_TEMP\superdmz-error.log" `
             -WindowStyle Hidden
 
           $deadline = (Get-Date).AddSeconds(90)
@@ -134,17 +137,17 @@ jobs:
 
             Start-Sleep -Seconds 3
 
-            if (Test-Path "$env:RUNNER_TEMP\aitun.log") {
+            if (Test-Path "$env:RUNNER_TEMP\superdmz.log") {
 
               $output = Get-Content `
-                "$env:RUNNER_TEMP\aitun.log" `
+                "$env:RUNNER_TEMP\superdmz.log" `
                 -Raw `
                 -ErrorAction SilentlyContinue
 
               if ($output) {
                 Write-Host $output
 
-                if ($output -match '([A-Za-z0-9.-]+\.aitun\.cc)') {
+                if ($output -match '(dmzgate\.com|connected|online)') {
                   $found = $true
                   break
                 }
@@ -152,34 +155,17 @@ jobs:
             }
           }
 
-          if (-not $found) {
-
-            Write-Host ""
-            Write-Host "========== AiTun OUTPUT =========="
-
-            if (Test-Path "$env:RUNNER_TEMP\aitun.log") {
-              Get-Content "$env:RUNNER_TEMP\aitun.log"
-            }
-
-            Write-Host ""
-            Write-Host "========== AiTun ERROR =========="
-
-            if (Test-Path "$env:RUNNER_TEMP\aitun-error.log") {
-              Get-Content "$env:RUNNER_TEMP\aitun-error.log"
-            }
-
-            throw "AiTun RDP tunnel could not be established."
-          }
-
           Write-Host ""
           Write-Host "============================================"
-          Write-Host "       WINDOWS RDP VIA AITUN"
+          Write-Host "       WINDOWS RDP VIA SUPERDMZ"
           Write-Host "============================================"
           Write-Host "Username: H1Z"
           Write-Host "Password: DRISdris@123"
+          Write-Host "Address: rdp-free-on-github.dmzgate.com:17931"
           Write-Host "============================================"
           Write-Host ""
 
+          # إبقاء الجلسة مفتوحة طوال وقت الـ Workflow
           while ($true) {
             Start-Sleep -Seconds 300
           }
@@ -189,7 +175,7 @@ jobs:
         shell: pwsh
         run: |
           Get-Process `
-            -Name "aitun" `
+            -Name "superdmz" `
             -ErrorAction SilentlyContinue |
             Stop-Process `
               -Force `

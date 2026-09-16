@@ -86,6 +86,7 @@ jobs:
           New-Item -ItemType File -Path $outLog -Force | Out-Null
           New-Item -ItemType File -Path $errLog -Force | Out-Null
 
+          # توجيه قناة المخرجات وقناة الأخطاء إلى ملفين منفصلين لتفادي التعارض
           $process = Start-Process -FilePath $dmz -ArgumentList "-token `"$env:SUPERDMZ_TOKEN`"" -RedirectStandardOutput $outLog -RedirectStandardError $errLog -PassThru -WindowStyle Hidden
 
           Write-Host "[✓] تم إطلاق عملية SuperDMZ (PID: $($process.Id))" -ForegroundColor Green
@@ -101,6 +102,7 @@ jobs:
           $lastErrLine = 0
 
           while ($true) {
+            # قراءة المخرجات المباشرة للبرنامج
             if (Test-Path $outLog) {
               $outLines = Get-Content $outLog -ErrorAction SilentlyContinue
               if ($outLines.Count -gt $lastOutLine) {
@@ -111,6 +113,7 @@ jobs:
               }
             }
 
+            # قراءة أي أخطاء تظهر من الأداة
             if (Test-Path $errLog) {
               $errLines = Get-Content $errLog -ErrorAction SilentlyContinue
               if ($errLines.Count -gt $lastErrLine) {

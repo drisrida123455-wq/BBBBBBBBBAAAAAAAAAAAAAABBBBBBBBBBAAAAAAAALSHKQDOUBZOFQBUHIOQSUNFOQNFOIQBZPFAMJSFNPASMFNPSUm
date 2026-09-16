@@ -1,4 +1,4 @@
-name: Windows RDP via Ngrok
+name: Windows RDP via AiTun
 
 on:
   push:
@@ -10,57 +10,23 @@ jobs:
 
     steps:
 
-      - name: Download Ngrok
+      - name: Download AiTun
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
-          $url = "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip"
-          $zip = "$env:RUNNER_TEMP\ngrok.zip"
-          $dir = "$env:RUNNER_TEMP\ngrok"
+          $url = "https://aitun.cc/downloads/aitun-client-windows-amd64.exe"
+          $aitun = "$env:GITHUB_WORKSPACE\aitun.exe"
 
-          Invoke-WebRequest -Uri $url -OutFile $zip
+          Invoke-WebRequest `
+            -Uri $url `
+            -OutFile $aitun
 
-          if (Test-Path $dir) {
-            Remove-Item $dir -Recurse -Force
+          if (-not (Test-Path $aitun)) {
+            throw "AiTun download failed."
           }
 
-          New-Item -ItemType Directory -Path $dir -Force | Out-Null
-
-          Expand-Archive `
-            -Path $zip `
-            -DestinationPath $dir `
-            -Force
-
-          if (-not (Test-Path "$dir\ngrok.exe")) {
-            throw "ngrok.exe was not found."
-          }
-
-          Copy-Item `
-            "$dir\ngrok.exe" `
-            "$env:GITHUB_WORKSPACE\ngrok.exe" `
-            -Force
-
-          Write-Host "Ngrok downloaded successfully."
-
-      - name: Authenticate Ngrok
-        shell: pwsh
-        env:
-          NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          if ([string]::IsNullOrWhiteSpace($env:NGROK_AUTH_TOKEN)) {
-            throw "NGROK_AUTH_TOKEN secret is missing."
-          }
-
-          & "$env:GITHUB_WORKSPACE\ngrok.exe" config add-authtoken "$env:NGROK_AUTH_TOKEN"
-
-          if ($LASTEXITCODE -ne 0) {
-            throw "Ngrok authentication failed."
-          }
-
-          Write-Host "Ngrok authentication successful."
+          Write-Host "AiTun downloaded successfully."
 
       - name: Enable RDP
         shell: pwsh
@@ -93,12 +59,11 @@ jobs:
           $username = "H1Z"
           $password = "DRISdris@123"
 
-          # Check whether H1Z already exists
-          $existingUser = Get-LocalUser `
+          $existing = Get-LocalUser `
             -Name $username `
             -ErrorAction SilentlyContinue
 
-          if ($existingUser) {
+          if ($existing) {
             Remove-LocalUser `
               -Name $username
           }
@@ -112,149 +77,120 @@ jobs:
             -Name $username `
             -Password $securePassword `
             -FullName "H1Z RDP User" `
-            -Description "RDP user for this temporary GitHub runner" `
+            -Description "Temporary RDP user" `
             -PasswordNeverExpires
 
           Add-LocalGroupMember `
             -Group "Administrators" `
             -Member $username
 
-          Write-Host "============================================"
-          Write-Host "RDP USER CREATED"
-          Write-Host "Username: H1Z"
-          Write-Host "============================================"
+          Write-Host "RDP user created."
 
-      - name: Allow RDP Firewall Rule
+      - name: Allow RDP Firewall
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
-          $rule = Get-NetFirewallRule `
-            -DisplayName "Allow RDP via Ngrok" `
-            -ErrorAction SilentlyContinue
+          if (-not (Get-NetFirewallRule `
+              -DisplayName "Allow RDP via AiTun" `
+              -ErrorAction SilentlyContinue)) {
 
-          if (-not $rule) {
             New-NetFirewallRule `
-              -DisplayName "Allow RDP via Ngrok" `
+              -DisplayName "Allow RDP via AiTun" `
               -Direction Inbound `
               -Action Allow `
               -Protocol TCP `
-              -LocalPort 3389 | Out-Null
+              -LocalPort 3389
           }
 
-          Write-Host "Firewall rule configured."
+          Write-Host "Firewall configured."
 
-      - name: Start Ngrok RDP Tunnel
+      - name: Start AiTun RDP Tunnel
         shell: pwsh
+        env:
+          AITUN_TOKEN: ${{ secrets.AITUN_TOKEN }}
         run: |
           $ErrorActionPreference = "Stop"
 
-          $ngrok = "$env:GITHUB_WORKSPACE\ngrok.exe"
-          $log = "$env:RUNNER_TEMP\ngrok.log"
-
-          if (Test-Path $log) {
-            Remove-Item $log -Force
+          if ([string]::IsNullOrWhiteSpace($env:AITUN_TOKEN)) {
+            throw "AITUN_TOKEN GitHub Secret is missing."
           }
 
-          # IMPORTANT:
-          # Only redirect stdout.
-          # Redirecting stdout and stderr to the same file causes
-          # the PowerShell error seen previously.
+          $aitun = "$env:GITHUB_WORKSPACE\aitun.exe"
+
+          Write-Host "Starting AiTun RDP tunnel..."
 
           Start-Process `
-            -FilePath $ngrok `
-            -ArgumentList "tcp 3389 --log=stdout" `
-            -RedirectStandardOutput $log `
+            -FilePath $aitun `
+            -ArgumentList "-k `"$env:AITUN_TOKEN`" rdp" `
+            -RedirectStandardOutput "$env:RUNNER_TEMP\aitun.log" `
+            -RedirectStandardError "$env:RUNNER_TEMP\aitun-error.log" `
             -WindowStyle Hidden
 
-          Write-Host "Waiting for Ngrok tunnel..."
-
-          $publicUrl = $null
           $deadline = (Get-Date).AddSeconds(90)
+          $found = $false
 
-          while ((Get-Date) -lt $deadline -and -not $publicUrl) {
+          while ((Get-Date) -lt $deadline) {
 
             Start-Sleep -Seconds 3
 
-            try {
-              $response = Invoke-RestMethod `
-                -Uri "http://127.0.0.1:4040/api/tunnels" `
-                -Method Get `
-                -ErrorAction Stop
+            if (Test-Path "$env:RUNNER_TEMP\aitun.log") {
 
-              if ($response.tunnels) {
-
-                foreach ($tunnel in $response.tunnels) {
-
-                  if ($tunnel.public_url -like "tcp://*") {
-                    $publicUrl = $tunnel.public_url
-                    break
-                  }
-
-                }
-              }
-            }
-            catch {
-              # Ngrok API may not be ready yet.
-            }
-
-            # Fallback: check the log
-            if (-not $publicUrl -and (Test-Path $log)) {
-
-              $content = Get-Content `
-                $log `
+              $output = Get-Content `
+                "$env:RUNNER_TEMP\aitun.log" `
                 -Raw `
                 -ErrorAction SilentlyContinue
 
-              if ($content -match 'tcp://([A-Za-z0-9\.\-]+:\d+)') {
-                $publicUrl = "tcp://$($Matches[1])"
+              if ($output) {
+                Write-Host $output
+
+                if ($output -match '([A-Za-z0-9.-]+\.aitun\.cc)') {
+                  $found = $true
+                  break
+                }
               }
             }
           }
 
-          if (-not $publicUrl) {
+          if (-not $found) {
 
             Write-Host ""
-            Write-Host "========== NGROK LOG =========="
+            Write-Host "========== AiTun OUTPUT =========="
 
-            if (Test-Path $log) {
-              Get-Content $log
+            if (Test-Path "$env:RUNNER_TEMP\aitun.log") {
+              Get-Content "$env:RUNNER_TEMP\aitun.log"
             }
 
-            Write-Host "==============================="
+            Write-Host ""
+            Write-Host "========== AiTun ERROR =========="
 
-            throw "Ngrok tunnel could not be established."
+            if (Test-Path "$env:RUNNER_TEMP\aitun-error.log") {
+              Get-Content "$env:RUNNER_TEMP\aitun-error.log"
+            }
+
+            throw "AiTun RDP tunnel could not be established."
           }
-
-          $address = $publicUrl -replace "^tcp://", ""
 
           Write-Host ""
           Write-Host "============================================"
-          Write-Host "       WINDOWS RDP CONNECTION"
+          Write-Host "       WINDOWS RDP VIA AITUN"
           Write-Host "============================================"
-          Write-Host "Address : $address"
           Write-Host "Username: H1Z"
           Write-Host "Password: DRISdris@123"
           Write-Host "============================================"
           Write-Host ""
-          Write-Host "Open Windows Remote Desktop (mstsc.exe)"
-          Write-Host "and enter the Address shown above."
-          Write-Host ""
 
-          # Keep the GitHub runner alive
           while ($true) {
             Start-Sleep -Seconds 300
           }
 
-      - name: Cleanup Ngrok
+      - name: Cleanup
         if: always()
         shell: pwsh
         run: |
           Get-Process `
-            -Name "ngrok" `
+            -Name "aitun" `
             -ErrorAction SilentlyContinue |
             Stop-Process `
               -Force `
               -ErrorAction SilentlyContinue
-
-          Write-Host "Ngrok process stopped."

@@ -16,16 +16,18 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
 
-          # رابط تحميل أداة SuperDMZ للويندوز
-          $url = "https://github.com/superdmz/superdmz/releases/latest/download/superdmz-windows-amd64.exe"
+          # استبدل هذا الرابط برابط تحميل العميل المباشر من لوحة SuperDMZ / DMZGate
+          $url = "https://dmzgate.com/downloads/superdmz-windows-amd64.exe"
           $dmz = "$env:GITHUB_WORKSPACE\superdmz.exe"
 
-          Invoke-WebRequest `
-            -Uri $url `
-            -OutFile $dmz
+          try {
+            Invoke-WebRequest -Uri $url -OutFile $dmz -UseBasicParsing
+          } catch {
+            Write-Host "فشل التحميل من الرابط المباشر، جاري البحث عن الملف المحلي..."
+          }
 
           if (-not (Test-Path $dmz)) {
-            throw "SuperDMZ download failed."
+            throw "SuperDMZ client binary not found. Please provide a valid download URL."
           }
 
           Write-Host "SuperDMZ downloaded successfully."
@@ -122,10 +124,10 @@ jobs:
 
           Write-Host "Starting SuperDMZ RDP tunnel..."
 
-          # تشغيل النفق المربوط بالـ TOKEN الخاص بك
+          # تشغيل النفق باستعمال SUPERDMZ_TOKEN
           Start-Process `
             -FilePath $dmz `
-            -ArgumentList "-t `"$env:SUPERDMZ_TOKEN`"" `
+            -ArgumentList "-k `"$env:SUPERDMZ_TOKEN`" rdp" `
             -RedirectStandardOutput "$env:RUNNER_TEMP\superdmz.log" `
             -RedirectStandardError "$env:RUNNER_TEMP\superdmz-error.log" `
             -WindowStyle Hidden
@@ -165,7 +167,7 @@ jobs:
           Write-Host "============================================"
           Write-Host ""
 
-          # إبقاء الجلسة مفتوحة طوال وقت الـ Workflow
+          # الإبقاء على تشغيل Workflow
           while ($true) {
             Start-Sleep -Seconds 300
           }

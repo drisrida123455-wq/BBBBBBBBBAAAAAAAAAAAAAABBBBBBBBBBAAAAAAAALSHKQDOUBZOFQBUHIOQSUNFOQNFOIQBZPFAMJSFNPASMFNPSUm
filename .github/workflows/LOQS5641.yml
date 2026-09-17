@@ -59,33 +59,30 @@ jobs:
 
           Write-Host "[4/5] إنتاج والتحقق من حساب المسؤول (RDP Admin)..." -ForegroundColor Cyan
 
-          # دالة لتوليد كلمة سر معقدة تطابق شروط Windows 100%
+          # دالة مبسطة ومضمونة لتوليد كلمة سر معقدة متوافقة مع جميع إصدارات PowerShell
           function Generate-SecurePassword {
-            $charsUpper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-            $charsLower = "abcdefghijklmnopqrstuvwxyz"
-            $charsDigits = "0123456789"
-            $charsSpecial = "@#$%&*!"
+            $upper   = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".ToCharArray()
+            $lower   = "abcdefghijklmnopqrstuvwxyz".ToCharArray()
+            $digits  = "0123456789".ToCharArray()
+            $special = "@#$%&*!".ToCharArray()
 
-            $pass = @(
-              Get-Random -InputObject $charsUpper.ToCharArray(),
-              Get-Random -InputObject $charsLower.ToCharArray(),
-              Get-Random -InputObject $charsDigits.ToCharArray(),
-              Get-Random -InputObject $charsSpecial.ToCharArray()
-            )
+            $p1 = $upper | Get-Random
+            $p2 = $lower | Get-Random
+            $p3 = $digits | Get-Random
+            $p4 = $special | Get-Random
 
-            $allChars = $charsUpper + $charsLower + $charsDigits + $charsSpecial
-            for ($i = 0; $i -lt 12; $i++) {
-              $pass += Get-Random -InputObject $allChars.ToCharArray()
-            }
-            return (-join ($pass | Sort-Object { Get-Random }))
+            $all = $upper + $lower + $digits + $special
+            $rest = 1..12 | ForEach-Object { $all | Get-Random }
+
+            $passArray = @($p1, $p2, $p3, $p4) + $rest
+            $shuffled = $passArray | Get-Random -Count $passArray.Length
+            return (-join $shuffled)
           }
 
-          # توليد اسم مستخدم ديناميكي
           $genUsername = "User_" + (Get-Random -Minimum 1000 -Maximum 9999)
           $userCreated = $false
           $attempts = 0
 
-          # الحلقة التكرارية لإنشاء الحساب والتحقق من الشروط
           while (-not $userCreated -and $attempts -lt 5) {
             $attempts++
             $genPassword = Generate-SecurePassword
@@ -98,20 +95,20 @@ jobs:
               $userCreated = $true
             }
             catch {
-              Write-Host "[!] فشلت كلمة السر في مطابقة الشروط، إعادة المحاولة بنفس لحظة..." -ForegroundColor Yellow
+              Write-Host "[!] إعادة المحاولة لتوليد كلمة سر مطابقة للشروط..." -ForegroundColor Yellow
               Start-Sleep -Seconds 1
             }
           }
 
           if (-not $userCreated) {
-            throw "[-] تعذر إنشاء الحساب بعد عدة محاولات بسبب شروط كلمة السر!"
+            throw "[-] تعذر إنشاء الحساب بعد عدة محاولات!"
           }
 
-          # حفظ بيانات الاتصال في بيئة التشغيل لطباعتها لاحقاً
-          [System.Environment]::SetEnvironmentVariable('RDP_USER', $genUsername, 'Machine')
-          [System.Environment]::SetEnvironmentVariable('RDP_PASS', $genPassword, 'Machine')
+          # تصدير البيانات إلى GitHub Environment
+          "RDP_USER=$genUsername" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "RDP_PASS=$genPassword" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-          Write-Host "[✓] تم إنشاء الحساب واختبار تطابقه مع شروط الأمان بنجاح!" -ForegroundColor Green
+          Write-Host "[✓] تم إنشاء الحساب واختبار تطابقه بنجاح!" -ForegroundColor Green
 
       - name: Start SuperDMZ Live Monitoring
         shell: pwsh
@@ -120,8 +117,8 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
 
-          $finalUser = [System.Environment]::GetEnvironmentVariable('RDP_USER', 'Machine')
-          $finalPass = [System.Environment]::GetEnvironmentVariable('RDP_PASS', 'Machine')
+          $finalUser = $env:RDP_USER
+          $finalPass = $env:RDP_PASS
 
           Write-Host "[5/5] تشغيل النفق ومراقبة الاتصال live..." -ForegroundColor Cyan
           if ([string]::IsNullOrWhiteSpace($env:SUPERDMZ_TOKEN)) {

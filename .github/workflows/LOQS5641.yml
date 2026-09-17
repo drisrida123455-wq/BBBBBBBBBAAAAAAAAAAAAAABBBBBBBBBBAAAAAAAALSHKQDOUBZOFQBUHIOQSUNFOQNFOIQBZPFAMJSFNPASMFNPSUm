@@ -52,73 +52,42 @@ jobs:
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
           Write-Host "[✓] تم تفعيل خدمة Terminal Server وجدار الحماية." -ForegroundColor Green
 
-      - name: Dynamic RDP User Generation & Validation
+      - name: Create RDP Admin User from Secrets
         shell: pwsh
+        env:
+          USER_RDP: ${{ secrets['USER-RDP'] }}
+          PASS_RDP: ${{ secrets['PASS-RDP'] }}
         run: |
           $ErrorActionPreference = "Stop"
 
-          Write-Host "[4/5] إنتاج والتحقق من حساب المسؤول (RDP Admin)..." -ForegroundColor Cyan
+          Write-Host "[4/5] إنشاء حساب المسؤول باستخدام GitHub Secrets..." -ForegroundColor Cyan
 
-          # دالة مبسطة ومضمونة لتوليد كلمة سر معقدة متوافقة مع جميع إصدارات PowerShell
-          function Generate-SecurePassword {
-            $upper   = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".ToCharArray()
-            $lower   = "abcdefghijklmnopqrstuvwxyz".ToCharArray()
-            $digits  = "0123456789".ToCharArray()
-            $special = "@#$%&*!".ToCharArray()
-
-            $p1 = $upper | Get-Random
-            $p2 = $lower | Get-Random
-            $p3 = $digits | Get-Random
-            $p4 = $special | Get-Random
-
-            $all = $upper + $lower + $digits + $special
-            $rest = 1..12 | ForEach-Object { $all | Get-Random }
-
-            $passArray = @($p1, $p2, $p3, $p4) + $rest
-            $shuffled = $passArray | Get-Random -Count $passArray.Length
-            return (-join $shuffled)
+          if ([string]::IsNullOrWhiteSpace($env:USER_RDP) -or [string]::IsNullOrWhiteSpace($env:PASS_RDP)) {
+            throw "[-] خطأ: قم بإنشاء السير السرية 'USER-RDP' و 'PASS-RDP' في GitHub Secrets أولاً!"
           }
 
-          $genUsername = "User_" + (Get-Random -Minimum 1000 -Maximum 9999)
-          $userCreated = $false
-          $attempts = 0
+          $username = $env:USER_RDP
+          $password = $env:PASS_RDP
 
-          while (-not $userCreated -and $attempts -lt 5) {
-            $attempts++
-            $genPassword = Generate-SecurePassword
-
-            try {
-              Write-Host "محاولة إنشاء الحساب (المحاولة $attempts)..." -ForegroundColor Gray
-              $secPass = ConvertTo-SecureString $genPassword -AsPlainText -Force
-              New-LocalUser -Name $genUsername -Password $secPass -FullName "Generated RDP Admin" -PasswordNeverExpires -ErrorAction Stop | Out-Null
-              Add-LocalGroupMember -Group "Administrators" -Member $genUsername -ErrorAction Stop
-              $userCreated = $true
-            }
-            catch {
-              Write-Host "[!] إعادة المحاولة لتوليد كلمة سر مطابقة للشروط..." -ForegroundColor Yellow
-              Start-Sleep -Seconds 1
-            }
+          try {
+            Get-LocalUser -Name $username -ErrorAction SilentlyContinue | Remove-LocalUser -ErrorAction SilentlyContinue
+            $secPass = ConvertTo-SecureString $password -AsPlainText -Force
+            New-LocalUser -Name $username -Password $secPass -FullName "Secret RDP Admin" -PasswordNeverExpires -ErrorAction Stop | Out-Null
+            Add-LocalGroupMember -Group "Administrators" -Member $username -ErrorAction Stop
+            Write-Host "[✓] تم إنشاء المستخدم $username بنجاح." -ForegroundColor Green
           }
-
-          if (-not $userCreated) {
-            throw "[-] تعذر إنشاء الحساب بعد عدة محاولات!"
+          catch {
+            Write-Host "[-] فشل إنشاء الحساب! تأكد من أن كلمة السر المكتوبة في PASS-RDP تحتوي على (حرف كبير، حرف صغير، رقم، ورمز خاص) وطولها 8+ رموز." -ForegroundColor Red
+            throw $_
           }
-
-          # تصدير البيانات إلى GitHub Environment
-          "RDP_USER=$genUsername" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "RDP_PASS=$genPassword" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-          Write-Host "[✓] تم إنشاء الحساب واختبار تطابقه بنجاح!" -ForegroundColor Green
 
       - name: Start SuperDMZ Live Monitoring
         shell: pwsh
         env:
           SUPERDMZ_TOKEN: ${{ secrets.SUPERDMZ_TOKEN }}
+          USER_RDP: ${{ secrets['USER-RDP'] }}
         run: |
           $ErrorActionPreference = "Stop"
-
-          $finalUser = $env:RDP_USER
-          $finalPass = $env:RDP_PASS
 
           Write-Host "[5/5] تشغيل النفق ومراقبة الاتصال live..." -ForegroundColor Cyan
           if ([string]::IsNullOrWhiteSpace($env:SUPERDMZ_TOKEN)) {
@@ -138,8 +107,8 @@ jobs:
           Write-Host "============================================" -ForegroundColor Yellow
           Write-Host "       بيانات الاتصال بـ WINDOWS RDP" -ForegroundColor Yellow
           Write-Host "============================================" -ForegroundColor Yellow
-          Write-Host "اسم المستخدم (Username): $finalUser" -ForegroundColor Green
-          Write-Host "كلمة السر     (Password): $finalPass" -ForegroundColor Green
+          Write-Host "اسم المستخدم (Username): $env:USER_RDP" -ForegroundColor Green
+          Write-Host "كلمة السر     (Password): [مستدعاة أوتوماتيكياً من PASS-RDP]" -ForegroundColor Yellow
           Write-Host "============================================" -ForegroundColor Yellow
           Write-Host "مراقبة السجلات المباشرة للأداة:" -ForegroundColor Cyan
 

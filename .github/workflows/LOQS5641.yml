@@ -1,4 +1,4 @@
-Name: Windows RDP via SuperDMZ
+name: Windows RDP via SuperDMZ
 
 on:
   push:

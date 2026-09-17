@@ -1,4 +1,4 @@
-name: Windows RDP via SuperDMZ
+Name: Windows RDP via SuperDMZ
 
 on:
   push:
@@ -52,20 +52,66 @@ jobs:
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
           Write-Host "[✓] تم تفعيل خدمة Terminal Server وجدار الحماية." -ForegroundColor Green
 
-      - name: Create RDP Admin User
+      - name: Dynamic RDP User Generation & Validation
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
-          Write-Host "[4/5] إنشاء حساب المستخدم RDP..." -ForegroundColor Cyan
-          $username = "H1Z"
-          $password = "DRISdris@123"
+          Write-Host "[4/5] إنتاج والتحقق من حساب المسؤول (RDP Admin)..." -ForegroundColor Cyan
 
-          Get-LocalUser -Name $username -ErrorAction SilentlyContinue | Remove-LocalUser -ErrorAction SilentlyContinue
-          $securePassword = ConvertTo-SecureString $password -AsPlainText -Force
-          New-LocalUser -Name $username -Password $securePassword -FullName "H1Z RDP User" -PasswordNeverExpires | Out-Null
-          Add-LocalGroupMember -Group "Administrators" -Member $username
-          Write-Host "[✓] تم إنشاء المستخدم $username وأضيف إلى مجموعة المسؤولين." -ForegroundColor Green
+          # دالة لتوليد كلمة سر معقدة تطابق شروط Windows 100%
+          function Generate-SecurePassword {
+            $charsUpper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            $charsLower = "abcdefghijklmnopqrstuvwxyz"
+            $charsDigits = "0123456789"
+            $charsSpecial = "@#$%&*!"
+
+            $pass = @(
+              Get-Random -InputObject $charsUpper.ToCharArray(),
+              Get-Random -InputObject $charsLower.ToCharArray(),
+              Get-Random -InputObject $charsDigits.ToCharArray(),
+              Get-Random -InputObject $charsSpecial.ToCharArray()
+            )
+
+            $allChars = $charsUpper + $charsLower + $charsDigits + $charsSpecial
+            for ($i = 0; $i -lt 12; $i++) {
+              $pass += Get-Random -InputObject $allChars.ToCharArray()
+            }
+            return (-join ($pass | Sort-Object { Get-Random }))
+          }
+
+          # توليد اسم مستخدم ديناميكي
+          $genUsername = "User_" + (Get-Random -Minimum 1000 -Maximum 9999)
+          $userCreated = $false
+          $attempts = 0
+
+          # الحلقة التكرارية لإنشاء الحساب والتحقق من الشروط
+          while (-not $userCreated -and $attempts -lt 5) {
+            $attempts++
+            $genPassword = Generate-SecurePassword
+
+            try {
+              Write-Host "محاولة إنشاء الحساب (المحاولة $attempts)..." -ForegroundColor Gray
+              $secPass = ConvertTo-SecureString $genPassword -AsPlainText -Force
+              New-LocalUser -Name $genUsername -Password $secPass -FullName "Generated RDP Admin" -PasswordNeverExpires -ErrorAction Stop | Out-Null
+              Add-LocalGroupMember -Group "Administrators" -Member $genUsername -ErrorAction Stop
+              $userCreated = $true
+            }
+            catch {
+              Write-Host "[!] فشلت كلمة السر في مطابقة الشروط، إعادة المحاولة بنفس لحظة..." -ForegroundColor Yellow
+              Start-Sleep -Seconds 1
+            }
+          }
+
+          if (-not $userCreated) {
+            throw "[-] تعذر إنشاء الحساب بعد عدة محاولات بسبب شروط كلمة السر!"
+          }
+
+          # حفظ بيانات الاتصال في بيئة التشغيل لطباعتها لاحقاً
+          [System.Environment]::SetEnvironmentVariable('RDP_USER', $genUsername, 'Machine')
+          [System.Environment]::SetEnvironmentVariable('RDP_PASS', $genPassword, 'Machine')
+
+          Write-Host "[✓] تم إنشاء الحساب واختبار تطابقه مع شروط الأمان بنجاح!" -ForegroundColor Green
 
       - name: Start SuperDMZ Live Monitoring
         shell: pwsh
@@ -73,6 +119,9 @@ jobs:
           SUPERDMZ_TOKEN: ${{ secrets.SUPERDMZ_TOKEN }}
         run: |
           $ErrorActionPreference = "Stop"
+
+          $finalUser = [System.Environment]::GetEnvironmentVariable('RDP_USER', 'Machine')
+          $finalPass = [System.Environment]::GetEnvironmentVariable('RDP_PASS', 'Machine')
 
           Write-Host "[5/5] تشغيل النفق ومراقبة الاتصال live..." -ForegroundColor Cyan
           if ([string]::IsNullOrWhiteSpace($env:SUPERDMZ_TOKEN)) {
@@ -86,15 +135,14 @@ jobs:
           New-Item -ItemType File -Path $outLog -Force | Out-Null
           New-Item -ItemType File -Path $errLog -Force | Out-Null
 
-          # توجيه قناة المخرجات وقناة الأخطاء إلى ملفين منفصلين لتفادي التعارض
           $process = Start-Process -FilePath $dmz -ArgumentList "-token `"$env:SUPERDMZ_TOKEN`"" -RedirectStandardOutput $outLog -RedirectStandardError $errLog -PassThru -WindowStyle Hidden
 
           Write-Host "[✓] تم إطلاق عملية SuperDMZ (PID: $($process.Id))" -ForegroundColor Green
           Write-Host "============================================" -ForegroundColor Yellow
           Write-Host "       بيانات الاتصال بـ WINDOWS RDP" -ForegroundColor Yellow
           Write-Host "============================================" -ForegroundColor Yellow
-          Write-Host "المستخدم: H1Z"
-          Write-Host "كلمة السر: DRISdris@123"
+          Write-Host "اسم المستخدم (Username): $finalUser" -ForegroundColor Green
+          Write-Host "كلمة السر     (Password): $finalPass" -ForegroundColor Green
           Write-Host "============================================" -ForegroundColor Yellow
           Write-Host "مراقبة السجلات المباشرة للأداة:" -ForegroundColor Cyan
 
@@ -102,7 +150,6 @@ jobs:
           $lastErrLine = 0
 
           while ($true) {
-            # قراءة المخرجات المباشرة للبرنامج
             if (Test-Path $outLog) {
               $outLines = Get-Content $outLog -ErrorAction SilentlyContinue
               if ($outLines.Count -gt $lastOutLine) {
@@ -113,7 +160,6 @@ jobs:
               }
             }
 
-            # قراءة أي أخطاء تظهر من الأداة
             if (Test-Path $errLog) {
               $errLines = Get-Content $errLog -ErrorAction SilentlyContinue
               if ($errLines.Count -gt $lastErrLine) {

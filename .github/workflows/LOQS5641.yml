@@ -52,18 +52,18 @@ jobs:
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
           Write-Host "[✓] تم تفعيل خدمة Terminal Server وجدار الحماية." -ForegroundColor Green
 
-      - name: Create RDP Admin User from Secrets
+      - name: Create RDP Admin User from Repository Variables
         shell: pwsh
         env:
-          USER_RDP: ${{ secrets['USER-RDP'] }}
-          PASS_RDP: ${{ secrets['PASS-RDP'] }}
+          USER_RDP: ${{ vars.USER_RDP }}
+          PASS_RDP: ${{ vars.PASS_RDP }}
         run: |
           $ErrorActionPreference = "Stop"
 
-          Write-Host "[4/5] إنشاء حساب المسؤول باستخدام GitHub Secrets..." -ForegroundColor Cyan
+          Write-Host "[4/5] إنشاء حساب المسؤول باستخدام Repository Variables..." -ForegroundColor Cyan
 
           if ([string]::IsNullOrWhiteSpace($env:USER_RDP) -or [string]::IsNullOrWhiteSpace($env:PASS_RDP)) {
-            throw "[-] خطأ: قم بإنشاء السير السرية 'USER-RDP' و 'PASS-RDP' في GitHub Secrets أولاً!"
+            throw "[-] خطأ: قم بإنشاء المتغيرات 'USER_RDP' و 'PASS_RDP' من قسم (Settings -> Secrets and variables -> Actions -> Variables) أولاً!"
           }
 
           $username = $env:USER_RDP
@@ -72,12 +72,12 @@ jobs:
           try {
             Get-LocalUser -Name $username -ErrorAction SilentlyContinue | Remove-LocalUser -ErrorAction SilentlyContinue
             $secPass = ConvertTo-SecureString $password -AsPlainText -Force
-            New-LocalUser -Name $username -Password $secPass -FullName "Secret RDP Admin" -PasswordNeverExpires -ErrorAction Stop | Out-Null
+            New-LocalUser -Name $username -Password $secPass -FullName "Variable RDP Admin" -PasswordNeverExpires -ErrorAction Stop | Out-Null
             Add-LocalGroupMember -Group "Administrators" -Member $username -ErrorAction Stop
             Write-Host "[✓] تم إنشاء المستخدم $username بنجاح." -ForegroundColor Green
           }
           catch {
-            Write-Host "[-] فشل إنشاء الحساب! تأكد من أن كلمة السر المكتوبة في PASS-RDP تحتوي على (حرف كبير، حرف صغير، رقم، ورمز خاص) وطولها 8+ رموز." -ForegroundColor Red
+            Write-Host "[-] فشل إنشاء الحساب! تأكد من أن كلمة السر المكتوبة في PASS_RDP تحتوي على (حرف كبير، حرف صغير، رقم، ورمز خاص) وطولها 8+ رموز." -ForegroundColor Red
             throw $_
           }
 
@@ -85,7 +85,7 @@ jobs:
         shell: pwsh
         env:
           SUPERDMZ_TOKEN: ${{ secrets.SUPERDMZ_TOKEN }}
-          USER_RDP: ${{ secrets['USER-RDP'] }}
+          USER_RDP: ${{ vars.USER_RDP }}
         run: |
           $ErrorActionPreference = "Stop"
 
@@ -108,7 +108,7 @@ jobs:
           Write-Host "       بيانات الاتصال بـ WINDOWS RDP" -ForegroundColor Yellow
           Write-Host "============================================" -ForegroundColor Yellow
           Write-Host "اسم المستخدم (Username): $env:USER_RDP" -ForegroundColor Green
-          Write-Host "كلمة السر     (Password): [مستدعاة أوتوماتيكياً من PASS-RDP]" -ForegroundColor Yellow
+          Write-Host "كلمة السر     (Password): [مستدعاة من Variable PASS_RDP]" -ForegroundColor Yellow
           Write-Host "============================================" -ForegroundColor Yellow
           Write-Host "مراقبة السجلات المباشرة للأداة:" -ForegroundColor Cyan
 
